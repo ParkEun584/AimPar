@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 로우폴리 에임 트레이너</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB; /* 하늘색 배경 */
+            font-family: 'Malgun Gothic', sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        /* 화면 중앙 십자선(크로스헤어) */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background-color: #00ff00;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        /* UI 패널 */
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            text-shadow: 2px 2px 2px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 10;
+        }
+        h1, p { margin: 5px 0; }
+        #scoreBoard { font-size: 28px; font-weight: bold; }
+        #ammoBoard { font-size: 24px; color: #4CAF50; }
+        #reloadMsg {
+            color: #ff4444;
+            font-size: 24px;
+            font-weight: bold;
+            display: none;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        /* 시작 화면 (마우스 잠금 안내) */
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 20;
+            cursor: pointer;
+        }
+        #instructions {
+            text-align: center;
+            font-size: 20px;
+            line-height: 1.5;
+        }
+        .highlight { color: #ffeb3b; font-weight: bold; }
+    </style>
+    <!-- Three.js 라이브러리 로드 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="crosshair"></div>
+    
+    <div id="ui">
+        <div id="scoreBoard">점수: <span id="score">0</span></div>
+        <div id="ammoBoard">총알: <span id="ammo">10</span> / 10</div>
+        <div id="reloadMsg">재장전 필요! (R 키)</div>
+    </div>
+
+    <div id="blocker">
+        <div id="instructions">
+            <h1 style="font-size: 40px; margin-bottom: 20px;">3D 에임 트레이너</h1>
+            <p>화면을 <span class="highlight">클릭</span>하여 게임을 시작하세요.</p>
+            <p>마우스: 시점 이동 및 조준</p>
+            <p>좌클릭: 사격</p>
+            <p>R 키: 재장전</p>
+            <p style="font-size: 14px; margin-top:20px; color:#aaa;">(ESC를 누르면 마우스 잠금이 해제됩니다)</p>
+        </div>
+    </div>
+
+    <script>
+        // 1. 기본 씬, 카메라, 렌더러 설정
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // 맑은 하늘색
+        scene.fog = new THREE.Fog(0x87CEEB, 10, 50); // 안개 효과로 공간감 부여
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.rotation.order = 'YXZ'; // FPS 카메라 회전 순서 설정
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // 2. 조명 추가
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // 3. 환경 구성 (바닥)
+        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        const floorMat = new THREE.MeshLambertMaterial({ color: 0x557a2b });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // 4. 로우폴리 총(Gun) 만들기
+        const gunGroup = new THREE.Group();
+        
+        // 총 몸통
+        const bodyGeo = new THREE.BoxGeometry(0.1, 0.1, 0.4);
+        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const gunBody = new THREE.Mesh(bodyGeo, bodyMat);
+        gunGroup.add(gunBody);
+
+        // 총구 (배럴)
+        const barrelGeo = new THREE.BoxGeometry(0.06, 0.06, 0.3);
+        const barrelMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+        const gunBarrel = new THREE.Mesh(barrelGeo, barrelMat);
+        gunBarrel.position.set(0, 0.02, -0.3);
+        gunGroup.add(gunBarrel);
+
+        // 손잡이 (그립)
+        const gripGeo = new THREE.BoxGeometry(0.08, 0.2, 0.1);
+        const gripMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+        const gunGrip = new THREE.Mesh(gripGeo, gripMat);
+        gunGrip.position.set(0, -0.12, 0.1);
+        gunGrip.rotation.x = Math.PI / 8; // 약간 기울임
+        gunGroup.add(gunGrip);
+
+        // 총을 카메라 우측 하단에 위치시킴 (FPS 뷰)
+        gunGroup.position.set(0.3, -0.25, -0.6);
+        camera.add(gunGroup); // 총을 카메라의 자식으로 추가하여 시야를 따라가게 함
+        scene.add(camera);
+
+        // 5. 게임 상태 변수
+        let score = 0;
+        const maxAmmo = 10;
+        let ammo = maxAmmo;
+        let targets = [];
+        let recoil = 0; // 반동 애니메이션 수치
+
+        const scoreEl = document.getElementById('score');
+        const ammoEl = document.getElementById('ammo');
+        const reloadMsgEl = document.getElementById('reloadMsg');
+        const ammoBoardEl = document.getElementById('ammoBoard');
+
+        // 6. 과녁 생성 함수 (로우폴리 정육면체)
+        function spawnTarget() {
+            const size = Math.random() * 1 + 0.5; // 크기 랜덤
+            const geometry = new THREE.BoxGeometry(size, size, size);
+            // 빨간색 과녁
+            const material = new THREE.MeshLambertMaterial({ color: 0xff3333 });
+            const target = new THREE.Mesh(geometry, material);
+            
+            // 위치 랜덤 (플레이어 전방)
+            target.position.x = (Math.random() - 0.5) * 20; // 좌우 -10 ~ 10
+            target.position.y = Math.random() * 5 - 1;      // 높이 -1 ~ 4
+            target.position.z = -(Math.random() * 15 + 10); // 거리 10 ~ 25 앞쪽
+
+            target.castShadow = true;
+            scene.add(target);
+            targets.push(target);
+        }
+
+        // 초기 과녁 3개 생성
+        for(let i=0; i<3; i++) spawnTarget();
+
+        // 7. Raycaster (사격 판정용)
+        const raycaster = new THREE.Raycaster();
+        const centerScreen = new THREE.Vector2(0, 0); // 화면 정중앙
+
+        // 8. 마우스 잠금 (PointerLock) API 설정
+        const blocker = document.getElementById('blocker');
+        
+        blocker.addEventListener('click', () => {
+            document.body.requestPointerLock();
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === document.body) {
+                blocker.style.display = 'none'; // 게임 시작
+            } else {
+                blocker.style.display = 'flex'; // 일시정지
+            }
+        });
+
+        // 9. 마우스 이동 (시점 변환)
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === document.body) {
+                const movementX = e.movementX || 0;
+                const movementY = e.movementY || 0;
+
+                // 마우스 이동량에 따라 카메라 회전 (감도 조절)
+                camera.rotation.y -= movementX * 0.002;
+                camera.rotation.x -= movementY * 0.002;
+
+                // 위아래 고개 꺾임 제한 (90도 이상 안 넘어가게)
+                camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+            }
+        });
+
+        // 10. 사격 (마우스 클릭)
+        window.addEventListener('mousedown', (e) => {
+            if (document.pointerLockElement !== document.body) return;
+
+            if (ammo > 0) {
+                ammo--;
+                ammoEl.textContent = ammo;
+                
+                // 총알 색상 경고
+                if (ammo <= 3) ammoBoardEl.style.color = '#ff9800';
+                else ammoBoardEl.style.color = '#4CAF50';
+                
+                if (ammo === 0) {
+                    reloadMsgEl.style.display = 'block';
+                    ammoBoardEl.style.color = '#ff4444';
+                }
+
+                // 총 반동 이펙트
+                recoil = 1.0;
+
+                // 레이캐스팅 (화면 중앙에서 광선을 쏴서 충돌 검사)
+                raycaster.setFromCamera(centerScreen, camera);
+                const intersects = raycaster.intersectObjects(targets);
+
+                if (intersects.length > 0) {
+                    // 맞춘 과녁 제거
+                    const hitTarget = intersects[0].object;
+                    scene.remove(hitTarget);
+                    targets = targets.filter(t => t !== hitTarget);
+                    
+                    // 점수 증가 및 새 과녁 스폰
+                    score++;
+                    scoreEl.textContent = score;
+                    spawnTarget();
+                }
+            }
+        });
+
+        // 11. 재장전 (키보드)
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'r' && ammo < maxAmmo) {
+                ammo = maxAmmo;
+                ammoEl.textContent = ammo;
+                ammoBoardEl.style.color = '#4CAF50';
+                reloadMsgEl.style.display = 'none';
+                
+                // 장전 모션 (총이 살짝 내려갔다 올라옴)
+                gunGroup.position.y = -0.4; 
+            }
+        });
+
+        // 창 크기 조절 대응
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 12. 렌더링 루프 (애니메이션)
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 반동 효과 및 장전 모션 복구 애니메이션 (자연스럽게 원래 위치로 돌아감)
+            if (recoil > 0) {
+                recoil -= 0.1; // 반동 회복 속도
+                gunGroup.position.z = -0.6 + (recoil * 0.1); // 뒤로 밀림
+                gunGroup.rotation.x = recoil * 0.2; // 위로 들림
+            } else {
+                gunGroup.position.z = -0.6;
+                gunGroup.rotation.x = 0;
+            }
+            
+            // 장전 시 총이 내려갔다가 서서히 올라오는 효과
+            if (gunGroup.position.y < -0.25) {
+                gunGroup.position.y += 0.01;
+            }
+
+            // 과녁들 천천히 회전 (생동감)
+            targets.forEach(target => {
+                target.rotation.x += 0.01;
+                target.rotation.y += 0.01;
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
