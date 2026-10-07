@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D 로우폴리 에임 트레이너</title>
+    <title>3D 로우폴리 에임 트레이너 - 무기 시스템</title>
     <style>
         body {
             margin: 0;
@@ -12,15 +12,13 @@
             font-family: 'Malgun Gothic', sans-serif;
             user-select: none;
         }
-        canvas {
-            display: block;
-        }
+        canvas { display: block; }
         #crosshair {
             position: absolute;
             top: 50%;
             left: 50%;
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             background-color: #00ff00;
             border-radius: 50%;
             transform: translate(-50%, -50%);
@@ -40,6 +38,7 @@
         #scoreBoard { font-size: 28px; font-weight: bold; }
         #accuracyBoard { font-size: 24px; color: #ffeb3b; font-weight: bold; }
         #ammoBoard { font-size: 24px; color: #4CAF50; }
+        #weaponBoard { font-size: 20px; color: #00ffff; margin-top: 10px; font-weight: bold;}
         #reloadMsg {
             color: #ff4444;
             font-size: 24px;
@@ -47,11 +46,7 @@
             display: none;
             animation: blink 1s infinite;
         }
-        @keyframes blink {
-            0% { opacity: 1; }
-            50% { opacity: 0; }
-            100% { opacity: 1; }
-        }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
         #blocker {
             position: absolute;
             width: 100%;
@@ -67,10 +62,11 @@
         }
         #instructions {
             text-align: center;
-            font-size: 20px;
-            line-height: 1.5;
+            font-size: 18px;
+            line-height: 1.6;
         }
         .highlight { color: #ffeb3b; font-weight: bold; }
+        .keybind { color: #00ffff; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
@@ -80,25 +76,28 @@
     <div id="ui">
         <div id="scoreBoard">점수: <span id="score">0</span></div>
         <div id="accuracyBoard">명중률: <span id="accuracy">100.0</span>%</div>
-        <div id="ammoBoard">총알: <span id="ammo">10</span> / 10</div>
+        <div id="ammoBoard">총알: <span id="ammo">10</span> / <span id="maxAmmoText">10</span></div>
+        <div id="weaponBoard">무기: <span id="weaponName">권총</span></div>
         <div id="reloadMsg">재장전 필요! (R 키)</div>
     </div>
 
     <div id="blocker">
         <div id="instructions">
-            <h1 style="font-size: 40px; margin-bottom: 20px;">3D 에임 트레이너</h1>
+            <h1 style="font-size: 40px; margin-bottom: 20px;">무기 선택 에임 트레이너</h1>
             <p>화면을 <span class="highlight">클릭</span>하여 게임을 시작하세요.</p>
-            <p>마우스: 시점 이동 및 조준</p>
-            <p>좌클릭: 사격</p>
-            <p>R 키: 재장전</p>
+            <p>좌클릭: 사격 &nbsp;|&nbsp; R 키: 재장전</p>
+            <p><span class="keybind">1번 키</span>: 권총 (기본 과녁)</p>
+            <p><span class="keybind">2번 키</span>: 돌격소총 (좌클릭 연사 가능, 움직이는 과녁)</p>
+            <p><span class="keybind">3번 키</span>: 저격총 (우클릭 줌, 아주 멀고 작은 과녁)</p>
             <p style="font-size: 14px; margin-top:20px; color:#aaa;">(ESC를 누르면 마우스 잠금이 해제됩니다)</p>
         </div>
     </div>
 
     <script>
+        // 1. 기본 설정
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x87CEEB);
-        scene.fog = new THREE.Fog(0x87CEEB, 10, 50);
+        scene.fog = new THREE.Fog(0x87CEEB, 10, 80);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.rotation.order = 'YXZ';
@@ -110,13 +109,13 @@
 
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
-        
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
         dirLight.position.set(10, 20, 10);
         dirLight.castShadow = true;
         scene.add(dirLight);
 
-        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        // 바닥
+        const floorGeo = new THREE.PlaneGeometry(200, 200);
         const floorMat = new THREE.MeshLambertMaterial({ color: 0x557a2b });
         const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.rotation.x = -Math.PI / 2;
@@ -124,133 +123,230 @@
         floor.receiveShadow = true;
         scene.add(floor);
 
-        const gunGroup = new THREE.Group();
-        
-        const bodyGeo = new THREE.BoxGeometry(0.1, 0.1, 0.4);
-        const bodyMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
-        const gunBody = new THREE.Mesh(bodyGeo, bodyMat);
-        gunGroup.add(gunBody);
+        // 2. 무기 데이터 설정 (총마다 특성 부여)
+        const WEAPONS = {
+            1: { name: '권총', maxAmmo: 12, targetDist: [10, 25], targetSize: [0.5, 1.5], isAuto: false, targetSpeed: 0 },
+            2: { name: '돌격소총', maxAmmo: 30, targetDist: [15, 30], targetSize: [0.6, 1.2], isAuto: true, targetSpeed: 0.15 },
+            3: { name: '저격총', maxAmmo: 5, targetDist: [40, 70], targetSize: [0.5, 0.8], isAuto: false, targetSpeed: 0 }
+        };
 
-        const barrelGeo = new THREE.BoxGeometry(0.06, 0.06, 0.3);
-        const barrelMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
-        const gunBarrel = new THREE.Mesh(barrelGeo, barrelMat);
-        gunBarrel.position.set(0, 0.02, -0.3);
-        gunGroup.add(gunBarrel);
-
-        const gripGeo = new THREE.BoxGeometry(0.08, 0.2, 0.1);
-        const gripMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
-        const gunGrip = new THREE.Mesh(gripGeo, gripMat);
-        gunGrip.position.set(0, -0.12, 0.1);
-        gunGrip.rotation.x = Math.PI / 8;
-        gunGroup.add(gunGrip);
-
-        gunGroup.position.set(0.3, -0.25, -0.6);
-        camera.add(gunGroup);
-        scene.add(camera);
-
-        // 변수 추가: 총 발사 횟수 및 명중 횟수
+        let currentWeapon = 1;
         let score = 0;
         let totalShots = 0;
-        const maxAmmo = 10;
-        let ammo = maxAmmo;
+        let ammo = WEAPONS[1].maxAmmo;
         let targets = [];
         let recoil = 0;
+        let isFiring = false;
+        let lastFireTime = 0;
 
+        // UI 요소
         const scoreEl = document.getElementById('score');
         const accuracyEl = document.getElementById('accuracy');
         const ammoEl = document.getElementById('ammo');
+        const maxAmmoTextEl = document.getElementById('maxAmmoText');
+        const weaponNameEl = document.getElementById('weaponName');
         const reloadMsgEl = document.getElementById('reloadMsg');
         const ammoBoardEl = document.getElementById('ammoBoard');
 
+        // 3. 총기 3D 모델링 생성 함수 (무기별로 다르게 조립)
+        const gunGroup = new THREE.Group();
+        camera.add(gunGroup);
+        scene.add(camera);
+
+        const gunMats = {
+            black: new THREE.MeshLambertMaterial({ color: 0x111111 }),
+            grey: new THREE.MeshLambertMaterial({ color: 0x444444 }),
+            dark: new THREE.MeshLambertMaterial({ color: 0x222222 })
+        };
+
+        function buildGunModel(type) {
+            // 기존 총기 파츠 지우기
+            while(gunGroup.children.length > 0){ gunGroup.remove(gunGroup.children[0]); }
+            
+            if (type === 1) { // 권총
+                gunGroup.position.set(0.3, -0.25, -0.6);
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.4), gunMats.dark);
+                const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.3), gunMats.grey);
+                barrel.position.set(0, 0.02, -0.3);
+                const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), gunMats.black);
+                grip.position.set(0, -0.12, 0.1);
+                grip.rotation.x = Math.PI / 8;
+                gunGroup.add(body, barrel, grip);
+            } 
+            else if (type === 2) { // 돌격소총 (AR)
+                gunGroup.position.set(0.35, -0.3, -0.7);
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.5), gunMats.dark);
+                const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.5), gunMats.grey);
+                barrel.position.set(0, 0.02, -0.45);
+                const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.12), gunMats.black);
+                mag.position.set(0, -0.15, -0.05); // 탄창
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.3), gunMats.black);
+                stock.position.set(0, -0.05, 0.35); // 개머리판
+                gunGroup.add(body, barrel, mag, stock);
+            } 
+            else if (type === 3) { // 저격총 (Sniper)
+                gunGroup.position.set(0.4, -0.3, -0.8);
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.6), gunMats.dark);
+                const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.9), gunMats.grey);
+                barrel.position.set(0, 0, -0.7); // 긴 총열
+                const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 16), gunMats.black);
+                scope.rotation.x = Math.PI / 2;
+                scope.position.set(0, 0.08, -0.1); // 스코프
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.4), gunMats.black);
+                stock.position.set(0, -0.05, 0.4);
+                gunGroup.add(body, barrel, scope, stock);
+            }
+        }
+        buildGunModel(currentWeapon);
+
+        // 4. 과녁 생성 (무기에 맞춰 거리, 크기, 속도 변경)
         function spawnTarget() {
-            const size = Math.random() * 1 + 0.5;
+            const wInfo = WEAPONS[currentWeapon];
+            const size = Math.random() * (wInfo.targetSize[1] - wInfo.targetSize[0]) + wInfo.targetSize[0];
             const geometry = new THREE.BoxGeometry(size, size, size);
             const material = new THREE.MeshLambertMaterial({ color: 0xff3333 });
             const target = new THREE.Mesh(geometry, material);
             
-            target.position.x = (Math.random() - 0.5) * 20;
-            target.position.y = Math.random() * 5 - 1;
-            target.position.z = -(Math.random() * 15 + 10);
+            // 총 종류에 따라 과녁 거리 설정
+            const dist = Math.random() * (wInfo.targetDist[1] - wInfo.targetDist[0]) + wInfo.targetDist[0];
+            target.position.x = (Math.random() - 0.5) * 30; // 좌우 범위
+            target.position.y = Math.random() * 5 - 1;      // 높이
+            target.position.z = -dist;                      // 깊이(거리)
+
+            // 돌격소총(AR)일 경우 움직이는 과녁 속성 부여
+            if (wInfo.targetSpeed > 0) {
+                target.userData.moving = true;
+                target.userData.speedX = (Math.random() > 0.5 ? 1 : -1) * wInfo.targetSpeed;
+            } else {
+                target.userData.moving = false;
+            }
 
             target.castShadow = true;
             scene.add(target);
             targets.push(target);
         }
 
-        for(let i=0; i<3; i++) spawnTarget();
+        function resetTargets() {
+            targets.forEach(t => scene.remove(t));
+            targets = [];
+            for(let i=0; i<4; i++) spawnTarget();
+        }
+        resetTargets();
 
-        const raycaster = new THREE.Raycaster();
-        const centerScreen = new THREE.Vector2(0, 0);
+        // 5. 무기 교체 로직
+        window.addEventListener('keydown', (e) => {
+            const key = parseInt(e.key);
+            if (key >= 1 && key <= 3 && key !== currentWeapon) {
+                currentWeapon = key;
+                const wInfo = WEAPONS[currentWeapon];
+                
+                // UI 및 상태 업데이트
+                weaponNameEl.textContent = wInfo.name;
+                ammo = wInfo.maxAmmo;
+                ammoEl.textContent = ammo;
+                maxAmmoTextEl.textContent = wInfo.maxAmmo;
+                ammoBoardEl.style.color = '#4CAF50';
+                reloadMsgEl.style.display = 'none';
+                
+                // 줌 초기화 (저격총 쓰다 바꿀 때 대비)
+                camera.fov = 75;
+                camera.updateProjectionMatrix();
 
-        const blocker = document.getElementById('blocker');
-        
-        blocker.addEventListener('click', () => {
-            document.body.requestPointerLock();
-        });
-
-        document.addEventListener('pointerlockchange', () => {
-            if (document.pointerLockElement === document.body) {
-                blocker.style.display = 'none';
-            } else {
-                blocker.style.display = 'flex';
+                buildGunModel(currentWeapon);
+                resetTargets();
+            }
+            
+            // 재장전
+            if (e.key.toLowerCase() === 'r' && ammo < WEAPONS[currentWeapon].maxAmmo) {
+                ammo = WEAPONS[currentWeapon].maxAmmo;
+                ammoEl.textContent = ammo;
+                ammoBoardEl.style.color = '#4CAF50';
+                reloadMsgEl.style.display = 'none';
+                gunGroup.position.y = -0.5; // 장전 모션
             }
         });
 
+        // 6. 마우스 컨트롤 및 줌(저격총)
+        const blocker = document.getElementById('blocker');
+        blocker.addEventListener('click', () => document.body.requestPointerLock());
+        document.addEventListener('pointerlockchange', () => {
+            blocker.style.display = (document.pointerLockElement === document.body) ? 'none' : 'flex';
+            isFiring = false;
+        });
+
+        // 우클릭 시 메뉴 뜨는 현상 방지
+        document.addEventListener('contextmenu', e => e.preventDefault());
+
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === document.body) {
-                const movementX = e.movementX || 0;
-                const movementY = e.movementY || 0;
-
-                camera.rotation.y -= movementX * 0.002;
-                camera.rotation.x -= movementY * 0.002;
+                // 줌 상태(FOV)에 맞춰 마우스 감도 조절 (줌 하면 감도 느려짐)
+                const sensitivity = 0.002 * (camera.fov / 75);
+                camera.rotation.y -= (e.movementX || 0) * sensitivity;
+                camera.rotation.x -= (e.movementY || 0) * sensitivity;
                 camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
             }
         });
 
+        // 7. 사격 로직 (단발 및 연사)
+        const raycaster = new THREE.Raycaster();
+        const centerScreen = new THREE.Vector2(0, 0);
+
+        function shoot() {
+            if (ammo <= 0) {
+                reloadMsgEl.style.display = 'block';
+                ammoBoardEl.style.color = '#ff4444';
+                return;
+            }
+
+            ammo--;
+            totalShots++;
+            ammoEl.textContent = ammo;
+            
+            if (ammo <= (WEAPONS[currentWeapon].maxAmmo * 0.3)) ammoBoardEl.style.color = '#ff9800';
+            else ammoBoardEl.style.color = '#4CAF50';
+            
+            if (ammo === 0) {
+                reloadMsgEl.style.display = 'block';
+                ammoBoardEl.style.color = '#ff4444';
+            }
+
+            // 반동 효과 (무기에 따라 반동 크기 다름)
+            recoil = currentWeapon === 3 ? 2.0 : 1.0;
+
+            raycaster.setFromCamera(centerScreen, camera);
+            const intersects = raycaster.intersectObjects(targets);
+
+            if (intersects.length > 0) {
+                const hitTarget = intersects[0].object;
+                scene.remove(hitTarget);
+                targets = targets.filter(t => t !== hitTarget);
+                
+                score++;
+                scoreEl.textContent = score;
+                spawnTarget();
+            }
+
+            const accuracy = ((score / totalShots) * 100).toFixed(1);
+            accuracyEl.textContent = accuracy;
+        }
+
         window.addEventListener('mousedown', (e) => {
             if (document.pointerLockElement !== document.body) return;
-
-            if (ammo > 0) {
-                ammo--;
-                totalShots++; // 총 발사 수 증가
-                ammoEl.textContent = ammo;
-                
-                if (ammo <= 3) ammoBoardEl.style.color = '#ff9800';
-                else ammoBoardEl.style.color = '#4CAF50';
-                
-                if (ammo === 0) {
-                    reloadMsgEl.style.display = 'block';
-                    ammoBoardEl.style.color = '#ff4444';
-                }
-
-                recoil = 1.0;
-
-                raycaster.setFromCamera(centerScreen, camera);
-                const intersects = raycaster.intersectObjects(targets);
-
-                if (intersects.length > 0) {
-                    const hitTarget = intersects[0].object;
-                    scene.remove(hitTarget);
-                    targets = targets.filter(t => t !== hitTarget);
-                    
-                    score++; // 명중 수 증가
-                    scoreEl.textContent = score;
-                    spawnTarget();
-                }
-
-                // 명중률 계산 (소수점 첫째 자리까지)
-                const accuracy = ((score / totalShots) * 100).toFixed(1);
-                accuracyEl.textContent = accuracy;
+            
+            if (e.button === 0) { // 좌클릭
+                isFiring = true;
+                if (!WEAPONS[currentWeapon].isAuto) shoot(); // 단발총(권총, 저격총)은 클릭 즉시 1발 발사
+            } else if (e.button === 2 && currentWeapon === 3) { // 우클릭 (저격총 줌)
+                camera.fov = 20; // 줌인
+                camera.updateProjectionMatrix();
             }
         });
 
-        window.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'r' && ammo < maxAmmo) {
-                ammo = maxAmmo;
-                ammoEl.textContent = ammo;
-                ammoBoardEl.style.color = '#4CAF50';
-                reloadMsgEl.style.display = 'none';
-                gunGroup.position.y = -0.4; 
+        window.addEventListener('mouseup', (e) => {
+            if (e.button === 0) isFiring = false;
+            else if (e.button === 2) {
+                camera.fov = 75; // 줌아웃
+                camera.updateProjectionMatrix();
             }
         });
 
@@ -260,25 +356,44 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
+        // 8. 메인 애니메이션 루프
         function animate() {
             requestAnimationFrame(animate);
 
+            // 돌격소총(AR) 연사 처리 (100ms마다 1발씩 = 초당 10발)
+            if (isFiring && WEAPONS[currentWeapon].isAuto) {
+                const now = Date.now();
+                if (now - lastFireTime > 100) {
+                    shoot();
+                    lastFireTime = now;
+                }
+            }
+
+            // 총 반동 모션 및 회복
             if (recoil > 0) {
                 recoil -= 0.1;
-                gunGroup.position.z = -0.6 + (recoil * 0.1);
-                gunGroup.rotation.x = recoil * 0.2;
+                gunGroup.position.z = (currentWeapon===3 ? -0.8 : (currentWeapon===2 ? -0.7 : -0.6)) + (recoil * 0.1);
+                gunGroup.rotation.x = recoil * 0.15;
             } else {
-                gunGroup.position.z = -0.6;
+                gunGroup.position.z = (currentWeapon===3 ? -0.8 : (currentWeapon===2 ? -0.7 : -0.6));
                 gunGroup.rotation.x = 0;
             }
             
-            if (gunGroup.position.y < -0.25) {
-                gunGroup.position.y += 0.01;
-            }
+            // 장전 모션 회복
+            if (gunGroup.position.y < -0.3) gunGroup.position.y += 0.01;
 
+            // 과녁 애니메이션 (회전 및 이동)
             targets.forEach(target => {
                 target.rotation.x += 0.01;
                 target.rotation.y += 0.01;
+                
+                // 돌격소총의 경우 과녁이 좌우로 움직임
+                if (target.userData.moving) {
+                    target.position.x += target.userData.speedX;
+                    if (target.position.x > 15 || target.position.x < -15) {
+                        target.userData.speedX *= -1; // 벽에 닿으면 튕김
+                    }
+                }
             });
 
             renderer.render(scene, camera);
